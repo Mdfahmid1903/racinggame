@@ -95,7 +95,7 @@ Jungle dash · HTML
  
 <div class="combo" id="combo-text">COMBO!</div>
  
-<div class="hint">Swipe or arrow keys · ↑ jump · ↓ slide · ← → switch lanes</div>
+<div class="hint">Swipe or tap zones · Top = jump · Bottom = slide · Left/Right = lanes</div>
  
 <!-- START SCREEN -->
 <div class="overlay show" id="overlay-start">
@@ -105,7 +105,7 @@ Jungle dash · HTML
     <button class="btn" id="btn-start">▶ TAP TO PLAY</button>
     <div class="controls-info">
       <strong>DESKTOP:</strong> <kbd>←</kbd> <kbd>→</kbd> lanes · <kbd>↑</kbd> jump · <kbd>↓</kbd> slide<br>
-      <strong>MOBILE:</strong> Swipe in any direction
+      <strong>MOBILE:</strong> Swipe in any direction — or tap zones (top = jump, bottom = slide, sides = lanes)
     </div>
   </div>
 </div>
@@ -199,11 +199,12 @@ const VH = () => innerHeight;
  
 /* ---------- LEVELS ---------- */
 const LEVELS = [
-  { name: 'Banana Buffet',  type: 'bananas',  target: 15, speed: 0.9, obstacleRate: 140, theme: 'jungle',    task: 'Collect 15 bananas' },
-  { name: 'The Long Run',   type: 'distance', target: 300, speed: 1.1, obstacleRate: 125, theme: 'jungle',    task: 'Run 300 meters' },
-  { name: 'Obstacle Course',type: 'dodge',    target: 25, speed: 1.3, obstacleRate: 115, theme: 'sunset',    task: 'Dodge 25 obstacles' },
-  { name: 'Golden Hour',    type: 'golden',   target: 5,  speed: 1.5, obstacleRate: 110, theme: 'sunset',    task: 'Collect 5 golden bananas' },
-  { name: 'Endless Jungle', type: 'time',     target: 60, speed: 1.7, obstacleRate: 100, theme: 'night',     task: 'Survive 60 seconds' }
+  { name: 'Banana Buffet',    type: 'bananas',  target: 10, speed: 0.9, obstacleRate: 180, theme: 'jungle',  task: 'Collect 10 bananas' },
+  { name: 'The Trail',        type: 'distance', target: 200, speed: 1.0, obstacleRate: 170, theme: 'jungle',  task: 'Travel 200 meters' },
+  { name: 'Combo Champion',   type: 'combo',    target: 8,  speed: 1.1, obstacleRate: 200, theme: 'jungle',  task: 'Chain an 8x combo' },
+  { name: 'Golden Hour',      type: 'golden',   target: 4,  speed: 1.2, obstacleRate: 170, theme: 'sunset',  task: 'Collect 4 golden bananas' },
+  { name: 'Gem Hunter',       type: 'gems',     target: 3,  speed: 1.4, obstacleRate: 175, theme: 'sunset',  task: 'Find 3 magic gems' },
+  { name: 'Endless Jungle',   type: 'time',     target: 45, speed: 1.6, obstacleRate: 160, theme: 'night',   task: 'Survive 45 seconds' }
 ];
  
 const THEMES = {
@@ -219,6 +220,8 @@ const game = {
   score: 0,
   bananas: 0,
   goldenBananas: 0,
+  gems: 0,
+  maxCombo: 0,
   distance: 0,
   dodged: 0,
   timeElapsed: 0,
@@ -647,6 +650,41 @@ function drawBanana(c) {
   ctx.scale(scale, scale);
   ctx.rotate(Math.sin(performance.now() / 400 + c.id) * 0.2);
  
+  if (c.type === 'gem') {
+    // Pulsing glow
+    const pulse = 0.7 + Math.sin(performance.now() / 200) * 0.3;
+    ctx.shadowBlur = 30 * pulse; ctx.shadowColor = c.gemColor;
+    // Outer diamond
+    ctx.fillStyle = c.gemColor;
+    ctx.beginPath();
+    ctx.moveTo(0, -14);
+    ctx.lineTo(11, -2);
+    ctx.lineTo(0, 14);
+    ctx.lineTo(-11, -2);
+    ctx.closePath();
+    ctx.fill();
+    // Top facets
+    ctx.fillStyle = '#fff';
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -14);
+    ctx.lineTo(11, -2);
+    ctx.lineTo(0, -2);
+    ctx.closePath();
+    ctx.fill();
+    // Bright shine
+    ctx.fillStyle = '#fff';
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(-3, -8);
+    ctx.lineTo(2, -10);
+    ctx.lineTo(0, -3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+ 
   if (c.type === 'golden') {
     ctx.shadowBlur = 20; ctx.shadowColor = '#ffd700';
     ctx.fillStyle = '#ffd700';
@@ -705,27 +743,52 @@ let spawnTimer = 0;
 function spawn() {
   const lvl = LEVELS[game.level];
   spawnTimer++;
-  if (spawnTimer > lvl.obstacleRate / 10) {
-    spawnTimer = 0;
-    const r = Math.random();
-    if (r < 0.55) {
-      // Obstacle
-      const types = ['log', 'rock', 'spike'];
-      if (game.level >= 1) types.push('branch');
-      const type = types[Math.floor(Math.random() * types.length)];
-      const lane = Math.floor(Math.random() * 3);
+  if (spawnTimer < lvl.obstacleRate / 12) return;
+  spawnTimer = 0;
+ 
+  const r = Math.random();
+  const obstacleProb = 0.22; // way fewer obstacles
+  const gemProb = lvl.type === 'gems' ? 0.22 : 0.05;
+ 
+  if (r < obstacleProb) {
+    // Obstacle — but check spacing so they don't cluster
+    const types = ['log', 'rock'];
+    if (game.level >= 1) types.push('spike');
+    if (game.level >= 2) types.push('branch');
+    const type = types[Math.floor(Math.random() * types.length)];
+    const lane = Math.floor(Math.random() * 3);
+    const nearby = obstacles.some(o => o.lane === lane && o.z < 0.25);
+    const blockedByItems = collectibles.some(c => c.lane === lane && c.z < 0.15);
+    if (!nearby && !blockedByItems) {
       obstacles.push({ type, lane, z: 0, scored: false });
-    } else {
-      // Collectibles — pattern of 3-5
-      const lane = Math.floor(Math.random() * 3);
-      const count = 3 + Math.floor(Math.random() * 3);
+    }
+  } else if (r < obstacleProb + gemProb) {
+    // Magic gem — big score bonus, mission target on Gem Hunter
+    const lane = Math.floor(Math.random() * 3);
+    const blocked = obstacles.some(o => o.lane === lane && o.z < 0.3);
+    if (!blocked) {
+      const colors = ['#ff5e8a', '#5eafff', '#5eff8a', '#d65eff', '#ffb35e'];
+      collectibles.push({
+        type: 'gem',
+        lane, z: 0, float: 0.5,
+        collected: false,
+        id: Math.random() * 1000,
+        gemColor: colors[Math.floor(Math.random() * colors.length)]
+      });
+    }
+  } else {
+    // Banana cluster
+    const lane = Math.floor(Math.random() * 3);
+    const blocked = obstacles.some(o => o.lane === lane && o.z < 0.2);
+    if (!blocked) {
+      const count = 4 + Math.floor(Math.random() * 4); // 4-7 bananas
+      const goldenChance = lvl.type === 'golden' ? 0.4 : 0.06;
       for (let i = 0; i < count; i++) {
-        const isGolden = lvl.type === 'golden' && Math.random() < 0.4;
-        const isGoldenAny = !isGolden && Math.random() < 0.05;
+        const isGolden = Math.random() < goldenChance;
         collectibles.push({
-          type: (isGolden || isGoldenAny) ? 'golden' : 'normal',
+          type: isGolden ? 'golden' : 'normal',
           lane,
-          z: -i * 0.08,
+          z: -i * 0.05,
           float: 0.3 + Math.random() * 0.4,
           collected: false,
           id: Math.random() * 1000
@@ -779,7 +842,16 @@ function drawParticles() {
 /* ---------- INPUT ---------- */
 function switchLane(dir) {
   if (game.state !== 'playing') return;
-  monkey.targetLane = Math.max(0, Math.min(2, monkey.targetLane + dir));
+  const newLane = Math.max(0, Math.min(2, monkey.targetLane + dir));
+  if (newLane === monkey.targetLane) return;
+  monkey.targetLane = newLane;
+  // Instant feedback: dust puff in the direction of motion
+  for (let i = 0; i < 8; i++) {
+    spawnParticle(monkey.laneX, groundY() + 3, {
+      color: '#fff', vx: -dir * (1.5 + Math.random()*2.5), vy: -Math.random()*2.5,
+      gravity: 0.18, size: 2 + Math.random(), decay: 0.06
+    });
+  }
 }
 function jump() {
   if (game.state !== 'playing' || monkey.jumping || monkey.sliding) return;
@@ -805,17 +877,42 @@ addEventListener('keydown', e => {
 });
  
 let touchStart = null;
-canvas.addEventListener('touchstart', e => { touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() }; }, { passive: true });
-canvas.addEventListener('touchend', e => {
-  if (!touchStart) return;
-  const dx = e.changedTouches[0].clientX - touchStart.x;
-  const dy = e.changedTouches[0].clientY - touchStart.y;
-  const dt = Date.now() - touchStart.t;
-  if (dt > 400) return;
+let touchTriggered = false;
+ 
+canvas.addEventListener('touchstart', e => {
+  if (e.touches.length !== 1) return;
+  touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+  touchTriggered = false;
+}, { passive: true });
+ 
+// INSTANT: react as soon as the finger moves enough — don't wait for lift
+canvas.addEventListener('touchmove', e => {
+  if (!touchStart || touchTriggered || e.touches.length !== 1) return;
+  const dx = e.touches[0].clientX - touchStart.x;
+  const dy = e.touches[0].clientY - touchStart.y;
   const absX = Math.abs(dx), absY = Math.abs(dy);
-  if (absX < 25 && absY < 25) return;
+  if (absX < 16 && absY < 16) return; // small threshold = instant feel
+  touchTriggered = true;
   if (absX > absY) { if (dx > 0) switchLane(1); else switchLane(-1); }
   else { if (dy < 0) jump(); else slide(); }
+}, { passive: true });
+ 
+// On lift: if no swipe registered, treat as a tap and use zones
+canvas.addEventListener('touchend', e => {
+  if (!touchStart) return;
+  const dt = Date.now() - touchStart.t;
+  if (!touchTriggered && dt < 350) {
+    const x = e.changedTouches[0].clientX;
+    const y = e.changedTouches[0].clientY;
+    const w = innerWidth, h = innerHeight;
+    // Tap zones: top third = jump, bottom third = slide, left/right = lanes
+    if (y < h * 0.35) jump();
+    else if (y > h * 0.7) slide();
+    else if (x < w * 0.5) switchLane(-1);
+    else switchLane(1);
+  }
+  touchStart = null;
+  touchTriggered = false;
 }, { passive: true });
  
 /* ---------- COLLISION ---------- */
@@ -862,21 +959,28 @@ function crashMonkey(o) {
  
 function collectBanana(c) {
   game.combo++;
-  game.comboTimer = 90;
-  if (c.type === 'golden') {
+  if (game.combo > game.maxCombo) game.maxCombo = game.combo;
+  game.comboTimer = 180; // 3-second combo window so chains are achievable
+ 
+  if (c.type === 'gem') {
+    game.gems++;
+    game.score += 100;
+    showCombo('+100 GEM!');
+  } else if (c.type === 'golden') {
     game.goldenBananas++;
     game.score += 50;
     showCombo('+50 GOLDEN!');
   } else {
     game.bananas++;
     game.score += 10 + Math.min(game.combo, 10);
-    if (game.combo > 0 && game.combo % 10 === 0) showCombo(`COMBO ×${game.combo}!`);
+    if (game.combo > 0 && game.combo % 5 === 0) showCombo(`COMBO ×${game.combo}!`);
   }
   // Particles
   const screen = collectibleScreenPos(c);
   if (screen) {
-    const color = c.type === 'golden' ? '#ffd700' : '#ffd23f';
-    for (let i = 0; i < 10; i++) spawnParticle(screen.x, screen.y, { color, shape: 'star', size: 2 + Math.random() * 2 });
+    const color = c.type === 'gem' ? c.gemColor : (c.type === 'golden' ? '#ffd700' : '#ffd23f');
+    const count = c.type === 'gem' ? 18 : 10;
+    for (let i = 0; i < count; i++) spawnParticle(screen.x, screen.y, { color, shape: 'star', size: 2 + Math.random() * 2 });
   }
 }
  
@@ -912,7 +1016,7 @@ function update(dt) {
  
   // Monkey lane interpolation
   const targetX = laneXForIndex(monkey.targetLane);
-  monkey.laneX += (targetX - monkey.laneX) * 0.22;
+  monkey.laneX += (targetX - monkey.laneX) * 0.32;
   if (Math.abs(targetX - monkey.laneX) < 1) monkey.lane = monkey.targetLane;
  
   // Jump physics
@@ -976,6 +1080,8 @@ function updateTaskBar() {
   let cur = 0;
   if (lvl.type === 'bananas') cur = game.bananas;
   else if (lvl.type === 'golden') cur = game.goldenBananas;
+  else if (lvl.type === 'gems') cur = game.gems;
+  else if (lvl.type === 'combo') cur = game.maxCombo;
   else if (lvl.type === 'distance') cur = Math.floor(game.distance);
   else if (lvl.type === 'dodge') cur = game.dodged;
   else if (lvl.type === 'time') cur = Math.floor(game.timeElapsed);
@@ -984,7 +1090,7 @@ function updateTaskBar() {
   document.getElementById('task-desc').textContent = `${cur} / ${lvl.target} ${taskUnit(lvl.type)}`;
 }
 function taskUnit(type) {
-  return { bananas: '🍌', golden: '⭐', distance: 'meters', dodge: 'dodged', time: 'seconds' }[type] || '';
+  return { bananas: '🍌', golden: '⭐', gems: '💎', combo: 'chain', distance: 'meters', dodge: 'dodged', time: 'seconds' }[type] || '';
 }
  
 function checkLevelComplete() {
@@ -992,6 +1098,8 @@ function checkLevelComplete() {
   let cur = 0;
   if (lvl.type === 'bananas') cur = game.bananas;
   else if (lvl.type === 'golden') cur = game.goldenBananas;
+  else if (lvl.type === 'gems') cur = game.gems;
+  else if (lvl.type === 'combo') cur = game.maxCombo;
   else if (lvl.type === 'distance') cur = game.distance;
   else if (lvl.type === 'dodge') cur = game.dodged;
   else if (lvl.type === 'time') cur = game.timeElapsed;
@@ -1067,6 +1175,8 @@ function startLevel(idx) {
   game.level = idx;
   game.bananas = 0;
   game.goldenBananas = 0;
+  game.gems = 0;
+  game.maxCombo = 0;
   game.dodged = 0;
   game.timeElapsed = 0;
   game.distance = 0;
